@@ -28,8 +28,7 @@ typedef struct {
  * return 0 on success, otherwise (init failure) return <0
  */
 int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned fsmState,
-bool isGlobalHist, bool isGlobalTable, int Shared);
-
+bool isGlobalHist, bool isGlobalTable, int isShare);
 /*
  * BP_predict - returns the predictor's prediction (taken / not taken) and predicted target address
  * param[in] pc - the branch instruction address
