@@ -201,6 +201,7 @@ public:
     
     bool branchExists(uint32_t pc, int BTBIndex, uint32_t tag)
     {
+        //BTB entries are initialised to nullptr upon BTB construction, so this means the index is available and the branch has not been seen yet
         if(m_BTB[BTBIndex].get() == nullptr)
             return false;
         
