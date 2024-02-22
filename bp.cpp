@@ -232,9 +232,14 @@ public:
         return m_BTB[BTBEntryIndex].get()->getLocalHistory();
     }
     
+    uint32_t getFsmIndex(int BTBEntryIndex, uint32_t pc)
+    {
+        return calcHistoryXOR(getHistory(BTBEntryIndex), pc);
+    }
+    
     void updateFSM(int BTBEntryIndex, bool branchTaken, uint32_t pc)
     {
-        uint32_t fsmIndex = calcHistoryXOR(getHistory(BTBEntryIndex), pc);
+        uint32_t fsmIndex = getFsmIndex(BTBEntryIndex, pc);
         if(!m_isGlobalTable)
         {
             m_BTB[BTBEntryIndex].get()->updateFsm(branchTaken, fsmIndex);
@@ -278,7 +283,7 @@ public:
             *dst = pc+4;
             return false;
         }
-        uint32_t fsmIndex = calcHistoryXOR(getHistory(index), pc);
+        uint32_t fsmIndex = getFsmIndex(index, pc);
         uint32_t target = m_BTB[index].get()->getTarget();
         if(m_isGlobalTable)
         {
