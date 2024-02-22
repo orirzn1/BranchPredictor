@@ -11,6 +11,9 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+#define BRANCH_TAKEN (1)
+#define BRANCH_NOT_TAKEN (0)
+
 /* A structure to return information about the currect simulator state */
 typedef struct {
 	unsigned flush_num;           // Machine flushes

@@ -30,11 +30,23 @@ protected:
 public:
     BTBEntry(){}
     
+    virtual ~BTBEntry() {}
+    
     uint32_t getTag() {return m_tag;}
     
     uint32_t getTarget() {return m_target;}
     
     uint32_t getLocalHistory() {return m_localHistory;}
+    
+    //This will place the most recent result in the lsb of the history register and get rid of the oldest result
+    //mostRecentResult should be 0 (branch not taken) or 1 (branch taken)
+    void updateLocalHistory(int mostRecentResult, int sizeOfHistory)
+    {
+        m_localHistory <<= 1;
+        uint32_t bitmask = (1 << sizeOfHistory) - 1;
+        m_localHistory = m_localHistory & bitmask;
+        m_localHistory = m_localHistory + mostRecentResult;
+    }
     
     virtual void updateFsm(bool branchTaken, int historyIndex)
     {}
@@ -47,21 +59,26 @@ private:
     std::vector<std::shared_ptr<stateFSM>> m_FsmVector;
 
 public:
-    explicit LocalBTBEntry(uint32_t tag, uint32_t target, uint32_t localHistory, stateFSM defaultState, int sizeOfHistoryReg)
+    explicit LocalBTBEntry(uint32_t tag, uint32_t target, stateFSM defaultState, int sizeOfHistoryReg)
     {
         m_tag = tag;
         m_target = target;
-        m_localHistory = localHistory;
+        m_localHistory = 0;
         int FsmVectorSize = std::pow(2, sizeOfHistoryReg);
-        m_FsmVector.resize(FsmVectorSize);
+        m_FsmVector.resize(FsmVectorSize, std::make_shared<stateFSM>(defaultState));
     }
     
-    virtual void updateFsm(bool branchTaken, int historyIndex) // the responsibility of correct history index calculation (local/global) is on the BTB
+    virtual void updateFsm(bool branchTaken, int historyIndex) // the responsibility of correct history index calculation (local/global and XOR) is on the BTB
     {
         if(branchTaken)
             *m_FsmVector[historyIndex].get() = (stateFSM)std::min((int)(*m_FsmVector[historyIndex].get())+1, 3);
         else
             *m_FsmVector[historyIndex].get() = (stateFSM)std::max((int)(*m_FsmVector[historyIndex].get())-1, 0);
+    }
+    
+    stateFSM getPrediction(int index)
+    {
+        return *m_FsmVector[index].get();
     }
 };
 
@@ -71,7 +88,13 @@ class BTB;
 class GlobalBTBEntry : public BTBEntry
 {
 public:
-    virtual void updateFsm(bool branchTaken, int historyIndex); // the responsibility of correct history index calculation (local/global) is on the BTB
+    explicit GlobalBTBEntry(uint32_t tag, uint32_t target)
+    {
+        m_tag = tag;
+        m_target = target;
+        m_localHistory = 0;
+    }
+    virtual void updateFsm(bool branchTaken, int historyIndex, BTB& tableObj); // the responsibility of correct history index calculation (local/global and XOR) is on the BTB
 };
 
 class BTB
@@ -80,12 +103,15 @@ private:
     unsigned m_tableSize;
     unsigned m_historyRegSize; // in bits
     unsigned m_tagSize; //in bits
-    unsigned m_defaultFsmState; //0-3
+    stateFSM m_defaultFsmState; //0-3
     bool m_isGlobalHist;
     bool m_isGlobalTable;
-    int m_isShare;
+    shareStatus m_shareStatus;
     int m_numBitsForIndex;
     unsigned m_globalHistoryReg;
+    
+    int m_updateCount;
+    int m_flushCount;
     
     std::vector<std::shared_ptr<BTBEntry>> m_BTB{};
     
@@ -93,15 +119,16 @@ private:
     
 public:
     explicit BTB(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned fsmState,
-                 bool isGlobalHist, bool isGlobalTable, int isShare) : m_tableSize(btbSize), m_historyRegSize(historySize), m_tagSize(tagSize), m_defaultFsmState(fsmState), m_isGlobalHist(isGlobalHist), m_isGlobalTable(isGlobalTable), m_isShare(isShare), m_globalHistoryReg(0)
+                 bool isGlobalHist, bool isGlobalTable, int isShare) : m_tableSize(btbSize), m_historyRegSize(historySize), m_tagSize(tagSize), m_defaultFsmState(stateFSM(fsmState)), m_isGlobalHist(isGlobalHist), m_isGlobalTable(isGlobalTable), m_shareStatus((shareStatus)isShare), m_globalHistoryReg(0), m_updateCount(0), m_flushCount(0)
     {
-        m_BTB.resize(m_tableSize);
+        m_BTB.resize(m_tableSize, nullptr);
         
         if(isGlobalTable)
         {
             int FsmVectorSize = std::pow(2, m_historyRegSize);
-            m_globalFsmVector.resize(FsmVectorSize);
+            m_globalFsmVector.resize(FsmVectorSize, std::make_shared<stateFSM>(m_defaultFsmState));
         }
+
         else
             m_globalFsmVector.resize(0);
         
@@ -126,38 +153,160 @@ public:
         return pc & bitmask; // perform bitwise and
     }
     
+    uint32_t calcHistoryXOR(uint32_t historyReg, uint32_t pc)
+    {
+        if(m_shareStatus == shareStatus::not_using_share || !m_isGlobalTable)
+            return historyReg;
+       
+        else if(m_shareStatus == shareStatus::using_share_lsb)
+            pc >>= 2;
+        
+        else if(m_shareStatus == shareStatus::using_share_mid)
+            pc >>= 16;
+        
+        uint32_t bitmask = (1 << m_historyRegSize) - 1;
+        
+        uint32_t resultXOR = historyReg ^ pc;
+        
+        return (resultXOR & bitmask);
+    }
+    
+    void incrementUpdateCount()
+    {
+        m_updateCount++;
+    }
+    
+    void incrementFlushCount()
+    {
+        m_flushCount++;
+    }
+    
+    int getUpdateCount()
+    {
+        return m_updateCount;
+    }
+    
+    int getFlushCount()
+    {
+        return m_flushCount;
+    }
+    
+    bool branchExists(uint32_t pc, int BTBIndex, uint32_t tag)
+    {
+        if(m_BTB[BTBIndex].get() == nullptr)
+            return false;
+        
+        if(m_BTB[BTBIndex].get()->getTag() == tag)
+            return true;
+        
+        return false;
+    }
+    
+    void updateHistory(int BTBEntryIndex, int mostRecentResult)
+    {
+        if(m_isGlobalHist)
+        {
+            m_globalHistoryReg <<= 1;
+            uint32_t bitmask = (1 << m_historyRegSize) - 1;
+            m_globalHistoryReg = m_globalHistoryReg & bitmask;
+            m_globalHistoryReg = m_globalHistoryReg + mostRecentResult;
+            return;
+        }
+        
+        m_BTB[BTBEntryIndex].get()->updateLocalHistory(mostRecentResult, m_historyRegSize);
+    }
+    
+    uint32_t getHistory(int BTBEntryIndex)
+    {
+        if(m_isGlobalHist)
+            return m_globalHistoryReg;
+        
+        return m_BTB[BTBEntryIndex].get()->getLocalHistory();
+    }
+    
+    void updateFSM(int BTBEntryIndex, bool branchTaken, uint32_t pc)
+    {
+        uint32_t fsmIndex = calcHistoryXOR(getHistory(BTBEntryIndex), pc);
+        if(!m_isGlobalTable)
+        {
+            m_BTB[BTBEntryIndex].get()->updateFsm(branchTaken, fsmIndex);
+            return;
+        }
+        if(branchTaken)
+            *m_globalFsmVector[fsmIndex].get() = (stateFSM)std::min((int)(*m_globalFsmVector[fsmIndex].get())+1, 3);
+        else
+            *m_globalFsmVector[fsmIndex].get() = (stateFSM)std::max((int)(*m_globalFsmVector[fsmIndex].get())-1, 0);
+    }
+    
+    void addBranch(int index, uint32_t tag, uint32_t target)
+    {
+        if(m_isGlobalTable)
+            m_BTB[index] = std::make_shared<GlobalBTBEntry>(tag, target);
+        else
+            m_BTB[index] = std::make_shared<LocalBTBEntry>(tag, target, m_defaultFsmState, (int)m_historyRegSize);
+    }
+    
     friend class GlobalBTBEntry;
     
 };
 
 std::vector<std::shared_ptr<stateFSM>> BTB::m_globalFsmVector; //define outside so linker can see
 
-void GlobalBTBEntry::updateFsm(bool branchTaken, int historyIndex) // the responsibility of correct history index calculation (local/global) is on the BTB
+void GlobalBTBEntry::updateFsm(bool branchTaken, int historyIndex, BTB& tableObj) // the responsibility of correct history index calculation (local/global) is on the BTB
 {
     if(branchTaken)
-        *BTB::m_globalFsmVector[historyIndex].get() = (stateFSM)std::min((int)(*BTB::m_globalFsmVector[historyIndex].get())+1, 3);
+        *tableObj.m_globalFsmVector[historyIndex].get() = (stateFSM)std::min((int)(*tableObj.m_globalFsmVector[historyIndex].get())+1, 3);
     else
-        *BTB::m_globalFsmVector[historyIndex].get() = (stateFSM)std::max((int)(*BTB::m_globalFsmVector[historyIndex].get())-1, 0);
+        *tableObj.m_globalFsmVector[historyIndex].get() = (stateFSM)std::max((int)(*tableObj.m_globalFsmVector[historyIndex].get())-1, 0);
 }
 
-static std::shared_ptr<BTB> BranchTargetBuffer;
+static std::unique_ptr<BTB> BranchTargetBuffer;
 
 int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned fsmState,
 			bool isGlobalHist, bool isGlobalTable, int isShare)
 {
-    BranchTargetBuffer = std::make_shared<BTB>(btbSize, historySize, tagSize, fsmState, isGlobalHist, isGlobalTable, isShare);
+    BranchTargetBuffer = std::make_unique<BTB>(btbSize, historySize, tagSize, fsmState, isGlobalHist, isGlobalTable, isShare);
 	return -1;
 }
 
-bool BP_predict(uint32_t pc, uint32_t *dst){
+bool BP_predict(uint32_t pc, uint32_t *dst)
+{
+    //finish predict
 	return false;
 }
 
-void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
+void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst)
+{
+    BranchTargetBuffer.get()->incrementUpdateCount();
+    uint32_t tag = BranchTargetBuffer.get()->calcBTBEntryTag(pc);
+    int index = BranchTargetBuffer.get()->calcBTBEntryIndex(pc);
+    
+    //If the branch exists in the BTB just update values
+    if(BranchTargetBuffer.get()->branchExists(pc, index, tag))
+    {
+        BranchTargetBuffer.get()->updateFSM(index, taken, pc);
+        BranchTargetBuffer.get()->updateHistory(index, (int)taken);
+        //double check this is all we need to do in case branch already exists in BTB
+    }
+    else //If it doesn't exist we add it
+    {
+        BranchTargetBuffer.get()->addBranch(index, tag, targetPc);
+    }
+    
+    //In the case of misprediction increment flush count
+    if((pred_dst == targetPc) && !taken)
+        BranchTargetBuffer.get()->incrementFlushCount();
+    else if((pred_dst != targetPc) && taken)
+        BranchTargetBuffer.get()->incrementFlushCount();
+    
 	return;
 }
 
-void BP_GetStats(SIM_stats *curStats){
+void BP_GetStats(SIM_stats *curStats)
+{
+    curStats->flush_num = BranchTargetBuffer.get()->getFlushCount();
+    curStats->br_num = BranchTargetBuffer.get()->getUpdateCount();
+    //complete size calculation
 	return;
 }
 
