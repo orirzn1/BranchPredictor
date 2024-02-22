@@ -50,6 +50,11 @@ public:
     
     virtual void updateFsm(bool branchTaken, int historyIndex)
     {}
+    
+    virtual bool getPrediction(int index)
+    {
+        return false;
+    }
 };
 
 //This class implements a unique vector of FSM for every branch (PC) (LOCAL)
@@ -76,9 +81,12 @@ public:
             *m_FsmVector[historyIndex].get() = (stateFSM)std::max((int)(*m_FsmVector[historyIndex].get())-1, 0);
     }
     
-    stateFSM getPrediction(int index)
+    bool getPrediction(int index)
     {
-        return *m_FsmVector[index].get();
+        if(*m_FsmVector[index].get() == stateFSM::ST || *m_FsmVector[index].get() == stateFSM::WT)
+            return true;
+        
+        return false;
     }
 };
 
@@ -246,6 +254,57 @@ public:
             m_BTB[index] = std::make_shared<LocalBTBEntry>(tag, target, m_defaultFsmState, (int)m_historyRegSize);
     }
     
+    unsigned calcSize()
+    {
+        unsigned size = m_tableSize * (m_tagSize + 31); //unsure about the 31, check tests
+        if(m_isGlobalHist)
+            size += m_historyRegSize;
+        else
+            size += m_tableSize * m_historyRegSize;
+        if(m_isGlobalTable)
+            size += std::pow(2, m_historyRegSize + 1); //2 bit FSM * 2^historysize
+        else   //each entry in BTB has 2 bit FSM * 2^historysize
+            size += m_tableSize * std::pow(2, m_historyRegSize + 1);
+        
+        return size;
+    }
+    
+    bool predict(uint32_t pc, uint32_t *dst)
+    {
+        int index = calcBTBEntryIndex(pc);
+        uint32_t tag = calcBTBEntryTag(pc);
+        if(!branchExists(pc, index, tag))
+        {
+            *dst = pc+4;
+            return false;
+        }
+        uint32_t fsmIndex = calcHistoryXOR(getHistory(index), pc);
+        uint32_t target = m_BTB[index].get()->getTarget();
+        if(m_isGlobalTable)
+        {
+            if(*m_globalFsmVector[fsmIndex].get() == stateFSM::ST || *m_globalFsmVector[fsmIndex].get() == stateFSM::WT)
+            {
+                *dst = target;
+                return true;
+            }
+            
+            *dst = pc+4;
+            return false;
+        }
+        else
+        {
+            if(m_BTB[index].get()->getPrediction(fsmIndex))
+            {
+                *dst = target;
+                return true;
+            }
+            *dst = pc+4;
+            return false;
+        }
+        
+        return false;
+    }
+    
     friend class GlobalBTBEntry;
     
 };
@@ -271,8 +330,7 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 
 bool BP_predict(uint32_t pc, uint32_t *dst)
 {
-    //finish predict
-	return false;
+    return BranchTargetBuffer.get()->predict(pc, dst);
 }
 
 void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst)
@@ -306,7 +364,7 @@ void BP_GetStats(SIM_stats *curStats)
 {
     curStats->flush_num = BranchTargetBuffer.get()->getFlushCount();
     curStats->br_num = BranchTargetBuffer.get()->getUpdateCount();
-    //complete size calculation
+    curStats->size = BranchTargetBuffer.get()->calcSize();
 	return;
 }
 
