@@ -345,17 +345,13 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst)
     uint32_t tag = BranchTargetBuffer.get()->calcBTBEntryTag(pc);
     int index = BranchTargetBuffer.get()->calcBTBEntryIndex(pc);
     
-    //If the branch exists in the BTB just update values
-    if(BranchTargetBuffer.get()->branchExists(pc, index, tag))
-    {
-        BranchTargetBuffer.get()->updateFSM(index, taken, pc);
-        BranchTargetBuffer.get()->updateHistory(index, (int)taken);
-        //double check this is all we need to do in case branch already exists in BTB
-    }
-    else //If it doesn't exist we add it
-    {
+    //If the branch does not exist in the BTB add it
+    if(!BranchTargetBuffer.get()->branchExists(pc, index, tag))
         BranchTargetBuffer.get()->addBranch(index, tag, targetPc);
-    }
+    
+    BranchTargetBuffer.get()->updateFSM(index, taken, pc);
+    BranchTargetBuffer.get()->updateHistory(index, (int)taken);
+        //double check this - do we update FSM and History in every case? Even if branch doesnt exist?
     
     //In the case of misprediction increment flush count
     if((pred_dst == targetPc) && !taken)
