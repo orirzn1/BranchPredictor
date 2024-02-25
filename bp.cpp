@@ -39,6 +39,8 @@ public:
     
     uint32_t getLocalHistory() {return m_localHistory;}
     
+    void setTarget(uint32_t target) {m_target = target;}
+    
     //This will place the most recent result in the lsb of the history register and get rid of the oldest result
     //mostRecentResult should be 0 (branch not taken) or 1 (branch taken)
     void updateLocalHistory(int mostRecentResult, int sizeOfHistory)
@@ -340,6 +342,11 @@ public:
         return false;
     }
     
+    void updateTarget(int BTBEntryIndex, uint32_t target)
+    {
+        m_BTB[BTBEntryIndex].get()->setTarget(target);
+    }
+    
     friend class GlobalBTBEntry;
     
 };
@@ -385,6 +392,7 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst)
     
     BranchTargetBuffer.get()->updateFSM(index, taken, pc);
     BranchTargetBuffer.get()->updateHistory(index, (int)taken);
+    BranchTargetBuffer.get()->updateTarget(index, targetPc);
         //double check this - do we update FSM and History in every case? Even if branch doesnt exist?
     
     //In the case of misprediction increment flush count
