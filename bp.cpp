@@ -364,10 +364,10 @@ void GlobalBTBEntry::updateFsmGlobal(bool branchTaken, int historyIndex, BTB& ta
 static std::unique_ptr<BTB> BranchTargetBuffer;
 
 int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned fsmState,
-			bool isGlobalHist, bool isGlobalTable, int isShare)
+			bool isGlobalHist, bool isGlobalTable, int Shared)
 {
     try{
-        BranchTargetBuffer.reset(new BTB(btbSize, historySize, tagSize, fsmState, isGlobalHist, isGlobalTable, isShare));
+        BranchTargetBuffer.reset(new BTB(btbSize, historySize, tagSize, fsmState, isGlobalHist, isGlobalTable, Shared));
         return 0;
     } catch (...) {
         return -1;
