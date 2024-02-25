@@ -75,7 +75,7 @@ public:
 
         // Emplace defaultState into each element of the vector
         for (int i = 0; i < FsmVectorSize; ++i) {
-            m_FsmVector.emplace_back(std::make_unique<stateFSM>(defaultState));
+            m_FsmVector.emplace_back(std::unique_ptr<stateFSM>(new stateFSM(defaultState)));
         }
     }
     
@@ -149,7 +149,7 @@ public:
 
             // Emplace defaultState into each element of the vector
             for (int i = 0; i < FsmVectorSize; ++i) {
-                m_globalFsmVector.emplace_back(std::make_unique<stateFSM>(m_defaultFsmState));
+                m_globalFsmVector.emplace_back(std::unique_ptr<stateFSM>(new stateFSM(m_defaultFsmState)));
             }
         }
 
@@ -284,9 +284,9 @@ public:
     void addBranch(int index, uint32_t tag, uint32_t target)
     {
         if(m_isGlobalTable)
-            m_BTB[index] = std::make_unique<GlobalBTBEntry>(tag, target);
+            m_BTB[index] = std::unique_ptr<GlobalBTBEntry>(new GlobalBTBEntry(tag, target));
         else
-            m_BTB[index] = std::make_unique<LocalBTBEntry>(tag, target, m_defaultFsmState, (int)m_historyRegSize);
+            m_BTB[index] = std::unique_ptr<LocalBTBEntry>(new LocalBTBEntry(tag, target, m_defaultFsmState, (int)m_historyRegSize));
     }
     
     unsigned calcSize()
