@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <bitset>
+#include <iostream>
 
 enum stateFSM
 {
@@ -61,7 +62,7 @@ public:
 class LocalBTBEntry : public BTBEntry
 {
 private:
-    std::vector<std::shared_ptr<stateFSM>> m_FsmVector;
+    std::vector<std::unique_ptr<stateFSM>> m_FsmVector;
 
 public:
     explicit LocalBTBEntry(uint32_t tag, uint32_t target, stateFSM defaultState, int sizeOfHistoryReg)
@@ -70,7 +71,12 @@ public:
         m_target = target;
         m_localHistory = 0;
         int FsmVectorSize = std::pow(2, sizeOfHistoryReg);
-        m_FsmVector.resize(FsmVectorSize, std::make_shared<stateFSM>(defaultState));
+        m_FsmVector.reserve(FsmVectorSize);
+
+        // Emplace defaultState into each element of the vector
+        for (int i = 0; i < FsmVectorSize; ++i) {
+            m_FsmVector.emplace_back(std::make_unique<stateFSM>(defaultState));
+        }
     }
     
     virtual void updateFsm(bool branchTaken, int historyIndex) // the responsibility of correct history index calculation (local/global and XOR) is on the BTB
@@ -121,20 +127,30 @@ private:
     int m_updateCount;
     int m_flushCount;
     
-    std::vector<std::shared_ptr<BTBEntry>> m_BTB{};
+    std::vector<std::unique_ptr<BTBEntry>> m_BTB{};
     
-    static std::vector<std::shared_ptr<stateFSM>> m_globalFsmVector; //all instances of GlobalBTBEntry will be able to access/modify this
+    static std::vector<std::unique_ptr<stateFSM>> m_globalFsmVector; //all instances of GlobalBTBEntry will be able to access/modify this
     
 public:
     explicit BTB(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned fsmState,
                  bool isGlobalHist, bool isGlobalTable, int isShare) : m_tableSize(btbSize), m_historyRegSize(historySize), m_tagSize(tagSize), m_defaultFsmState(stateFSM(fsmState)), m_isGlobalHist(isGlobalHist), m_isGlobalTable(isGlobalTable), m_shareStatus((shareStatus)isShare), m_globalHistoryReg(0), m_updateCount(0), m_flushCount(0)
     {
-        m_BTB.resize(m_tableSize, nullptr);
+        m_BTB.reserve(m_tableSize);
+
+        // Emplace defaultState into each element of the vector
+        for (int i = 0; i < m_tableSize; ++i) {
+            m_BTB.emplace_back(nullptr);
+        }
         
         if(isGlobalTable)
         {
             int FsmVectorSize = std::pow(2, m_historyRegSize);
-            m_globalFsmVector.resize(FsmVectorSize, std::make_shared<stateFSM>(m_defaultFsmState));
+            m_globalFsmVector.reserve(FsmVectorSize);
+
+            // Emplace defaultState into each element of the vector
+            for (int i = 0; i < FsmVectorSize; ++i) {
+                m_globalFsmVector.emplace_back(std::make_unique<stateFSM>(m_defaultFsmState));
+            }
         }
 
         else
@@ -250,14 +266,27 @@ public:
             *m_globalFsmVector[fsmIndex].get() = (stateFSM)std::min((int)(*m_globalFsmVector[fsmIndex].get())+1, 3);
         else
             *m_globalFsmVector[fsmIndex].get() = (stateFSM)std::max((int)(*m_globalFsmVector[fsmIndex].get())-1, 0);
+        /*int i = 0;
+        for(auto& x : m_globalFsmVector)
+        {
+            if(*x == SNT)
+                std::cout << "state of index " << i << "is SNT" << std::endl;
+            else if(*x == WNT)
+                std::cout << "state of index " << i << "is WNT" << std::endl;
+            else if(*x == WT)
+                std::cout << "state of index " << i << "is WT" << std::endl;
+            else if(*x == ST)
+                std::cout << "state of index " << i << "is ST" << std::endl;
+            i++; 
+        }*/
     }
     
     void addBranch(int index, uint32_t tag, uint32_t target)
     {
         if(m_isGlobalTable)
-            m_BTB[index] = std::make_shared<GlobalBTBEntry>(tag, target);
+            m_BTB[index] = std::make_unique<GlobalBTBEntry>(tag, target);
         else
-            m_BTB[index] = std::make_shared<LocalBTBEntry>(tag, target, m_defaultFsmState, (int)m_historyRegSize);
+            m_BTB[index] = std::make_unique<LocalBTBEntry>(tag, target, m_defaultFsmState, (int)m_historyRegSize);
     }
     
     unsigned calcSize()
@@ -315,7 +344,7 @@ public:
     
 };
 
-std::vector<std::shared_ptr<stateFSM>> BTB::m_globalFsmVector; //define outside so linker can see
+std::vector<std::unique_ptr<stateFSM>> BTB::m_globalFsmVector; //define outside so linker can see
 
 void GlobalBTBEntry::updateFsmGlobal(bool branchTaken, int historyIndex, BTB& tableObj) // the responsibility of correct history index calculation (local/global) is on the BTB
 {
