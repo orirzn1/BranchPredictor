@@ -396,7 +396,7 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst)
         //double check this - do we update FSM and History in every case? Even if branch doesnt exist?
     
     //In the case of misprediction increment flush count
-    if((pred_dst == targetPc) && !taken)
+    if((pred_dst != pc+4) && !taken)
         BranchTargetBuffer.get()->incrementFlushCount();
     else if((pred_dst != targetPc) && taken)
         BranchTargetBuffer.get()->incrementFlushCount();
