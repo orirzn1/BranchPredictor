@@ -102,7 +102,7 @@ public:
         m_target = target;
         m_localHistory = 0;
     }
-    virtual void updateFsm(bool branchTaken, int historyIndex, BTB& tableObj); // the responsibility of correct history index calculation (local/global and XOR) is on the BTB
+    virtual void updateFsmGlobal(bool branchTaken, int historyIndex, BTB& tableObj) ; // the responsibility of correct history index calculation (local/global and XOR) is on the BTB
 };
 
 class BTB
@@ -317,7 +317,7 @@ public:
 
 std::vector<std::shared_ptr<stateFSM>> BTB::m_globalFsmVector; //define outside so linker can see
 
-void GlobalBTBEntry::updateFsm(bool branchTaken, int historyIndex, BTB& tableObj) // the responsibility of correct history index calculation (local/global) is on the BTB
+void GlobalBTBEntry::updateFsmGlobal(bool branchTaken, int historyIndex, BTB& tableObj) // the responsibility of correct history index calculation (local/global) is on the BTB
 {
     if(branchTaken)
         *tableObj.m_globalFsmVector[historyIndex].get() = (stateFSM)std::min((int)(*tableObj.m_globalFsmVector[historyIndex].get())+1, 3);
@@ -330,8 +330,13 @@ static std::unique_ptr<BTB> BranchTargetBuffer;
 int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned fsmState,
 			bool isGlobalHist, bool isGlobalTable, int isShare)
 {
-    BranchTargetBuffer = std::make_unique<BTB>(btbSize, historySize, tagSize, fsmState, isGlobalHist, isGlobalTable, isShare);
-	return -1;
+    try{
+        BranchTargetBuffer.reset(new BTB(btbSize, historySize, tagSize, fsmState, isGlobalHist, isGlobalTable, isShare));
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+
 }
 
 bool BP_predict(uint32_t pc, uint32_t *dst)
